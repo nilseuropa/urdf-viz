@@ -95,15 +95,18 @@ const HOW_TO_USE_STR: &str = r#"[:    joint ID +1
 ,:    IK target ID +1
 .:    IK target ID -1
 r:    set random angles
+l:    Reload URDF
 z:    reset angles
 Up:   joint angle +0.1
 Down: joint angle -0.1
 Ctrl+Drag: move joint
-Shift+Drag: IK (y, z)
-Shift+Ctrl+Drag: IK (x, z)
+Shift+Drag: IK Translation(y, z)
+Shift+Ctrl+Drag: IK Translation(x, z)
+Shift+Alt+Drag: IK Rotation(y, z)
+Shift+Alt+Ctrl+Drag: IK Rotation(x, z)
 c:    toggle visual/collision"#;
 
-const FONT_SIZE_USAGE: f32 = 60.0;
+const FONT_SIZE_USAGE: f32 = 40.0;
 const FONT_SIZE_INFO: f32 = 80.0;
 
 struct CursorPos {
