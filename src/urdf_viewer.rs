@@ -91,6 +91,25 @@ impl LoopIndex {
 }
 
 const HOW_TO_USE_STR: &str = "[:    joint ID +1\n]:    joint ID -1\n,:    IK target ID +1\n.:    IK target ID -1\nr:    set random angles\nz:    reset angles\nUp:   joint angle +0.1\nDown: joint angle -0.1\nCtrl+Drag: move joint\nShift+Drag: IK (y, z)\nShift+Ctrl+Drag: IK (x, z)\nc:    toggle visual/collision";
+const FONT_SIZE_USAGE: f32 = 60.0;
+const FONT_SIZE_INFO: f32 = 80.0;
+
+struct CursorPos {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl CursorPos {
+    pub fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+}
+
+impl Default for CursorPos {
+    fn default() -> Self {
+        Self::new(0.0, 0.0)
+    }
+}
 
 struct UrdfViewerApp {
     input_path: PathBuf,
@@ -106,6 +125,12 @@ struct UrdfViewerApp {
     web_server_port: u16,
     is_collision: bool,
     ik_constraints: k::Constraints,
+
+    is_ctrl: bool,
+    is_shift: bool,
+    is_alt: bool,
+    last_cur_pos: CursorPos,
+    ik_solver: k::JacobianIKSolver<f32>,
 }
 
 impl UrdfViewerApp {
@@ -165,6 +190,11 @@ impl UrdfViewerApp {
             web_server_port,
             is_collision,
             ik_constraints: k::Constraints::default(),
+            is_shift: false,
+            is_ctrl: false,
+            is_alt: false,
+            last_cur_pos: CursorPos::default(),
+            ik_solver: k::JacobianIKSolver::default(),
         }
     }
     pub fn set_ik_constraints(&mut self, ik_constraints: k::Constraints) {
@@ -262,6 +292,23 @@ impl UrdfViewerApp {
             );
         }
     }
+    fn update_modifier_state(&mut self, mods: &Modifiers) {
+        if mods.contains(NATIVE_MOD) {
+            self.is_ctrl = true;
+        } else {
+            self.is_ctrl = false;
+        }
+        if mods.contains(kiss3d::event::Modifiers::Shift) {
+            self.is_shift = true;
+        } else {
+            self.is_shift = false;
+        }
+        if mods.contains(kiss3d::event::Modifiers::Alt) {
+            self.is_alt = true;
+        } else {
+            self.is_alt = false;
+        }
+    }
     fn handle_key_press(&mut self, code: Key) {
         match code {
             Key::LBracket => self.increment_move_joint_index(true),
@@ -323,20 +370,78 @@ impl UrdfViewerApp {
             _ => {}
         };
     }
+
+    fn handle_cursor_move(&mut self, x: f64, y: f64, event: &mut kiss3d::event::Event) {
+        if self.is_ctrl && !self.is_shift {
+            event.inhibited = true;
+            const MOVE_GAIN: f64 = 0.005;
+            if self.has_joints() {
+                let orig_angles = self.robot.joint_positions();
+                move_joint_by_index(
+                    self.index_of_move_joint.get(),
+                    (((x - self.last_cur_pos.x) + (y - self.last_cur_pos.y)) * MOVE_GAIN) as f32,
+                    &mut self.robot,
+                )
+                .unwrap_or_else(|err| {
+                    self.robot.set_joint_positions_unchecked(&orig_angles);
+                    println!("Err: {}", err);
+                });
+                self.update_robot();
+            }
+        }
+        if self.is_shift {
+            event.inhibited = true;
+            if self.has_arms() {
+                self.robot.update_transforms();
+                let mut target = self.get_end_transform();
+                if self.is_alt {
+                    const IK_ROT_GAIN: f64 = 0.005;
+                    target.rotation *= na::Rotation3::from_axis_angle(
+                        &na::Vector3::z_axis(),
+                        ((y - self.last_cur_pos.y) * IK_ROT_GAIN) as f32,
+                    );
+                    if self.is_ctrl {
+                        target.rotation *= na::Rotation3::from_axis_angle(
+                            &na::Vector3::x_axis(),
+                            ((x - self.last_cur_pos.x) * IK_ROT_GAIN) as f32,
+                        );
+                    } else {
+                        target.rotation *= na::Rotation3::from_axis_angle(
+                            &na::Vector3::y_axis(),
+                            ((x - self.last_cur_pos.x) * IK_ROT_GAIN) as f32,
+                        );
+                    }
+                } else {
+                    const IK_MOVE_GAIN: f64 = 0.002;
+                    target.translation.vector[2] -=
+                        ((y - self.last_cur_pos.y) * IK_MOVE_GAIN) as f32;
+                    if self.is_ctrl {
+                        target.translation.vector[0] +=
+                            ((x - self.last_cur_pos.x) * IK_MOVE_GAIN) as f32;
+                    } else {
+                        target.translation.vector[1] +=
+                            ((x - self.last_cur_pos.x) * IK_MOVE_GAIN) as f32;
+                    }
+                }
+                self.update_ik_target_marker();
+                let orig_angles = self.robot.joint_positions();
+                self.ik_solver
+                    .solve_with_constraints(&self.get_arm(), &target, &self.ik_constraints)
+                    .unwrap_or_else(|err| {
+                        self.robot.set_joint_positions_unchecked(&orig_angles);
+                        println!("Err: {}", err);
+                    });
+                self.update_robot();
+            }
+        }
+    }
     fn run(&mut self) {
-        let mut is_ctrl = false;
-        let mut is_shift = false;
-        let mut last_cur_pos_y = 0f64;
-        let mut last_cur_pos_x = 0f64;
-        let solver = k::JacobianIKSolver::default();
         let web_server = urdf_viz::WebServer::new(self.web_server_port);
         let (target_joint_positions, current_joint_positions) = web_server.clone_in_out();
         if let Ok(mut cur_ja) = current_joint_positions.lock() {
             cur_ja.names = self.names.clone();
         }
         std::thread::spawn(move || web_server.start());
-        const FONT_SIZE_USAGE: f32 = 60.0;
-        const FONT_SIZE_INFO: f32 = 80.0;
         while self.viewer.render() {
             self.viewer.draw_text(
                 HOW_TO_USE_STR,
@@ -388,7 +493,7 @@ impl UrdfViewerApp {
                     &na::Point3::new(0.5f32, 0.8, 0.2),
                 );
             }
-            if is_ctrl && !is_shift {
+            if self.is_ctrl && !self.is_shift {
                 self.viewer.draw_text(
                     "moving joint by drag",
                     FONT_SIZE_INFO,
@@ -396,7 +501,7 @@ impl UrdfViewerApp {
                     &na::Point3::new(0.9f32, 0.5, 1.0),
                 );
             }
-            if is_shift {
+            if self.is_shift {
                 self.viewer.draw_text(
                     "solving ik",
                     FONT_SIZE_INFO,
@@ -407,75 +512,41 @@ impl UrdfViewerApp {
             for mut event in self.viewer.events().iter() {
                 match event.value {
                     WindowEvent::MouseButton(_, Action::Press, mods) => {
-                        if mods.contains(NATIVE_MOD) {
-                            is_ctrl = true;
-                            event.inhibited = true;
-                        }
-                        if mods.contains(kiss3d::event::Modifiers::Shift) {
-                            is_shift = true;
-                            event.inhibited = true;
-                        }
+                        self.update_modifier_state(&mods);
                     }
                     WindowEvent::CursorPos(x, y, _modifiers) => {
-                        if is_ctrl && !is_shift {
-                            event.inhibited = true;
-                            let move_gain = 0.005;
-                            if self.has_joints() {
-                                move_joint_by_index(
-                                    self.index_of_move_joint.get(),
-                                    (((x - last_cur_pos_x) + (y - last_cur_pos_y)) * move_gain)
-                                        as f32,
-                                    &mut self.robot,
-                                )
-                                .unwrap_or(());
-                                self.update_robot();
-                            }
-                        }
-                        if is_shift {
-                            event.inhibited = true;
-                            if self.has_arms() {
-                                self.robot.update_transforms();
-                                let mut target = self.get_end_transform();
-                                let ik_move_gain = 0.002;
-                                target.translation.vector[2] -=
-                                    ((y - last_cur_pos_y) * ik_move_gain) as f32;
-                                if is_ctrl {
-                                    target.translation.vector[0] +=
-                                        ((x - last_cur_pos_x) * ik_move_gain) as f32;
-                                } else {
-                                    target.translation.vector[1] +=
-                                        ((x - last_cur_pos_x) * ik_move_gain) as f32;
-                                }
-
-                                self.update_ik_target_marker();
-                                let orig_angles = self.robot.joint_positions();
-                                solver
-                                    .solve_with_constraints(
-                                        &self.get_arm(),
-                                        &target,
-                                        &self.ik_constraints,
-                                    )
-                                    .unwrap_or_else(|err| {
-                                        self.robot.set_joint_positions_unchecked(&orig_angles);
-                                        println!("Err: {}", err);
-                                    });
-                                self.update_robot();
-                            }
-                        }
-                        last_cur_pos_x = x;
-                        last_cur_pos_y = y;
+                        self.handle_cursor_move(x, y, &mut event);
+                        self.last_cur_pos.x = x;
+                        self.last_cur_pos.y = y;
                     }
                     WindowEvent::MouseButton(_, Action::Release, _) => {
-                        if is_ctrl {
-                            is_ctrl = false;
+                        if self.is_ctrl {
+                            self.is_ctrl = false;
                             event.inhibited = true;
-                        } else if is_shift {
-                            is_shift = false;
+                        }
+                        if self.is_shift {
+                            self.is_shift = false;
+                            event.inhibited = true;
+                        }
+                        if self.is_alt {
+                            self.is_alt = false;
                             event.inhibited = true;
                         }
                     }
                     WindowEvent::Key(code, Action::Press, _modifiers) => {
                         self.handle_key_press(code);
+                        event.inhibited = true;
+                    }
+                    WindowEvent::Key(_code, Action::Release, mods) => {
+                        if mods.contains(NATIVE_MOD) {
+                            self.is_ctrl = false;
+                        }
+                        if mods.contains(kiss3d::event::Modifiers::Shift) {
+                            self.is_shift = false;
+                        }
+                        if mods.contains(kiss3d::event::Modifiers::Alt) {
+                            self.is_alt = false;
+                        }
                         event.inhibited = true;
                     }
                     _ => {}
