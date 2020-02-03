@@ -126,9 +126,9 @@ struct UrdfViewerApp {
     is_collision: bool,
     ik_constraints: k::Constraints,
 
-    is_ctrl: bool,
-    is_shift: bool,
-    is_alt: bool,
+    is_ctrl_pressed: bool,
+    is_shift_pressed: bool,
+    is_alt_pressed: bool,
     last_cur_pos: CursorPos,
     ik_solver: k::JacobianIKSolver<f32>,
 }
@@ -190,9 +190,9 @@ impl UrdfViewerApp {
             web_server_port,
             is_collision,
             ik_constraints: k::Constraints::default(),
-            is_shift: false,
-            is_ctrl: false,
-            is_alt: false,
+            is_shift_pressed: false,
+            is_ctrl_pressed: false,
+            is_alt_pressed: false,
             last_cur_pos: CursorPos::default(),
             ik_solver: k::JacobianIKSolver::default(),
         }
@@ -294,19 +294,19 @@ impl UrdfViewerApp {
     }
     fn update_modifier_state(&mut self, mods: &Modifiers) {
         if mods.contains(NATIVE_MOD) {
-            self.is_ctrl = true;
+            self.is_ctrl_pressed = true;
         } else {
-            self.is_ctrl = false;
+            self.is_ctrl_pressed = false;
         }
         if mods.contains(kiss3d::event::Modifiers::Shift) {
-            self.is_shift = true;
+            self.is_shift_pressed = true;
         } else {
-            self.is_shift = false;
+            self.is_shift_pressed = false;
         }
         if mods.contains(kiss3d::event::Modifiers::Alt) {
-            self.is_alt = true;
+            self.is_alt_pressed = true;
         } else {
-            self.is_alt = false;
+            self.is_alt_pressed = false;
         }
     }
     fn handle_key_press(&mut self, code: Key) {
@@ -372,7 +372,7 @@ impl UrdfViewerApp {
     }
 
     fn handle_cursor_move(&mut self, x: f64, y: f64, event: &mut kiss3d::event::Event) {
-        if self.is_ctrl && !self.is_shift {
+        if self.is_ctrl_pressed && !self.is_shift_pressed {
             event.inhibited = true;
             const MOVE_GAIN: f64 = 0.005;
             if self.has_joints() {
@@ -389,18 +389,18 @@ impl UrdfViewerApp {
                 self.update_robot();
             }
         }
-        if self.is_shift {
+        if self.is_shift_pressed {
             event.inhibited = true;
             if self.has_arms() {
                 self.robot.update_transforms();
                 let mut target = self.get_end_transform();
-                if self.is_alt {
+                if self.is_alt_pressed {
                     const IK_ROT_GAIN: f64 = 0.005;
                     target.rotation *= na::Rotation3::from_axis_angle(
                         &na::Vector3::z_axis(),
                         ((y - self.last_cur_pos.y) * IK_ROT_GAIN) as f32,
                     );
-                    if self.is_ctrl {
+                    if self.is_ctrl_pressed {
                         target.rotation *= na::Rotation3::from_axis_angle(
                             &na::Vector3::x_axis(),
                             ((x - self.last_cur_pos.x) * IK_ROT_GAIN) as f32,
@@ -415,7 +415,7 @@ impl UrdfViewerApp {
                     const IK_MOVE_GAIN: f64 = 0.002;
                     target.translation.vector[2] -=
                         ((y - self.last_cur_pos.y) * IK_MOVE_GAIN) as f32;
-                    if self.is_ctrl {
+                    if self.is_ctrl_pressed {
                         target.translation.vector[0] +=
                             ((x - self.last_cur_pos.x) * IK_MOVE_GAIN) as f32;
                     } else {
@@ -435,6 +435,58 @@ impl UrdfViewerApp {
             }
         }
     }
+    fn draw_texts(&mut self) {
+        self.viewer.draw_text(
+            HOW_TO_USE_STR,
+            FONT_SIZE_USAGE,
+            &na::Point2::new(2000.0, 10.0),
+            &na::Point3::new(1f32, 1.0, 1.0),
+        );
+
+        if self.has_arms() {
+            let name = &self
+                .get_arm()
+                .iter()
+                .last()
+                .unwrap()
+                .joint()
+                .name
+                .to_owned();
+            self.viewer.draw_text(
+                &format!("IK target name [{}]", name),
+                FONT_SIZE_INFO,
+                &na::Point2::new(10f32, 100.0),
+                &na::Point3::new(0.5f32, 0.8, 0.2),
+            );
+        }
+        if self.is_ctrl_pressed && !self.is_shift_pressed {
+            self.viewer.draw_text(
+                "moving joint by drag",
+                FONT_SIZE_INFO,
+                &na::Point2::new(10f32, 150.0),
+                &na::Point3::new(0.9f32, 0.5, 1.0),
+            );
+        }
+        if self.is_shift_pressed {
+            self.viewer.draw_text(
+                "solving ik",
+                FONT_SIZE_INFO,
+                &na::Point2::new(10f32, 150.0),
+                &na::Point3::new(0.9f32, 0.5, 1.0),
+            );
+        }
+        if self.has_joints() {
+            self.viewer.draw_text(
+                &format!(
+                    "moving joint name [{}]",
+                    self.names[self.index_of_move_joint.get()]
+                ),
+                FONT_SIZE_INFO,
+                &na::Point2::new(10f32, 20.0),
+                &na::Point3::new(0.5f32, 0.5, 1.0),
+            );
+        }
+    }
     fn run(&mut self) {
         let web_server = urdf_viz::WebServer::new(self.web_server_port);
         let (target_joint_positions, current_joint_positions) = web_server.clone_in_out();
@@ -443,23 +495,8 @@ impl UrdfViewerApp {
         }
         std::thread::spawn(move || web_server.start());
         while self.viewer.render() {
-            self.viewer.draw_text(
-                HOW_TO_USE_STR,
-                FONT_SIZE_USAGE,
-                &na::Point2::new(2000.0, 10.0),
-                &na::Point3::new(1f32, 1.0, 1.0),
-            );
+            self.draw_texts();
             if self.has_joints() {
-                self.viewer.draw_text(
-                    &format!(
-                        "moving joint name [{}]",
-                        self.names[self.index_of_move_joint.get()]
-                    ),
-                    FONT_SIZE_INFO,
-                    &na::Point2::new(10f32, 20.0),
-                    &na::Point3::new(0.5f32, 0.5, 1.0),
-                );
-
                 if let Ok(mut ja) = target_joint_positions.lock() {
                     if ja.requested {
                         match self.set_joint_positions_from_request(&ja.joint_positions) {
@@ -477,38 +514,6 @@ impl UrdfViewerApp {
                     cur_ja.positions = self.robot.joint_positions();
                 }
             }
-            if self.has_arms() {
-                let name = &self
-                    .get_arm()
-                    .iter()
-                    .last()
-                    .unwrap()
-                    .joint()
-                    .name
-                    .to_owned();
-                self.viewer.draw_text(
-                    &format!("IK target name [{}]", name),
-                    FONT_SIZE_INFO,
-                    &na::Point2::new(10f32, 100.0),
-                    &na::Point3::new(0.5f32, 0.8, 0.2),
-                );
-            }
-            if self.is_ctrl && !self.is_shift {
-                self.viewer.draw_text(
-                    "moving joint by drag",
-                    FONT_SIZE_INFO,
-                    &na::Point2::new(10f32, 150.0),
-                    &na::Point3::new(0.9f32, 0.5, 1.0),
-                );
-            }
-            if self.is_shift {
-                self.viewer.draw_text(
-                    "solving ik",
-                    FONT_SIZE_INFO,
-                    &na::Point2::new(10f32, 150.0),
-                    &na::Point3::new(0.9f32, 0.5, 1.0),
-                );
-            }
             for mut event in self.viewer.events().iter() {
                 match event.value {
                     WindowEvent::MouseButton(_, Action::Press, mods) => {
@@ -520,16 +525,16 @@ impl UrdfViewerApp {
                         self.last_cur_pos.y = y;
                     }
                     WindowEvent::MouseButton(_, Action::Release, _) => {
-                        if self.is_ctrl {
-                            self.is_ctrl = false;
+                        if self.is_ctrl_pressed {
+                            self.is_ctrl_pressed = false;
                             event.inhibited = true;
                         }
-                        if self.is_shift {
-                            self.is_shift = false;
+                        if self.is_shift_pressed {
+                            self.is_shift_pressed = false;
                             event.inhibited = true;
                         }
-                        if self.is_alt {
-                            self.is_alt = false;
+                        if self.is_alt_pressed {
+                            self.is_alt_pressed = false;
                             event.inhibited = true;
                         }
                     }
@@ -539,13 +544,13 @@ impl UrdfViewerApp {
                     }
                     WindowEvent::Key(_code, Action::Release, mods) => {
                         if mods.contains(NATIVE_MOD) {
-                            self.is_ctrl = false;
+                            self.is_ctrl_pressed = false;
                         }
                         if mods.contains(kiss3d::event::Modifiers::Shift) {
-                            self.is_shift = false;
+                            self.is_shift_pressed = false;
                         }
                         if mods.contains(kiss3d::event::Modifiers::Alt) {
-                            self.is_alt = false;
+                            self.is_alt_pressed = false;
                         }
                         event.inhibited = true;
                     }
