@@ -87,8 +87,10 @@ In the GUI, you can do some operations with keyboard and mouse.
   * `Ctrl` + Drag to move the angle of a joint
   * change the joint to be moved by `[` and `]`
 * Inverse kinematics (only positions)
-  * `Shift` + Drag to use inverse kinematics(Y and Z axis)
-  * `Shift` + `Ctrl` + Drag to use inverse kinematics(X and Z axis)
+  * `Shift` + Drag to use inverse kinematics (translation) (Y and Z axis)
+  * `Shift` + `Ctrl` + Drag to use inverse kinematics (translation) (X and Z axis)
+  * `Shift` + `Alt` + Drag to use inverse kinematics (rotation) (Y and Z axis)
+  * `Shift` + `Alt` + `Ctrl` + Drag to use inverse kinematics (rotation) (X and Z axis)
   * change the move target for inverse kinematics by `,` or `.`
 * `r` key to set random joints
 * Move view point
