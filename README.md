@@ -1,54 +1,8 @@
-# urdf-viz [![Build Status](https://travis-ci.org/OTL/urdf-viz.svg?branch=master)](https://travis-ci.org/OTL/urdf-viz) [![Build status](https://ci.appveyor.com/api/projects/status/ea2ymvkh8c90e09t?svg=true)](https://ci.appveyor.com/project/OTL/urdf-viz) [![crates.io](https://img.shields.io/crates/v/urdf-viz.svg)](https://crates.io/crates/urdf-viz)
+# urdf-viz
 
-Visualize [URDF(Unified Robot Description Format)](http://wiki.ros.org/urdf) file.
-`urdf-viz` is written in Rust-lang.
+ Visualizer Tool, written by **Takashi Ogura** in Rust.
 
-## Install
-
-### Install with `cargo`
-
-If you are using rust-lang already and `cargo` is installed, you can install by `cargo install`.
-
-```bash
-cargo install urdf-viz
-```
-
-#### (FYI) Install `cargo`
-
-```bash
-curl https://sh.rustup.rs -sSf | sh
-```
-
-and follow the instruction of the installer.
-
-## Pre-requirements for build
-
-### On Linux
-
-If you have not installed ROS, you may need cmake, xorg-dev, glu to
-compile assimp-sys and glfw-sys.
-
-```bash
-sudo apt-get install cmake xorg-dev libglu1-mesa-dev
-```
-
-### On Windows
-
-You need freetype.lib in your PATH, which is required by `freetype-sys`.
-You can find binaries [here](https://github.com/PistonDevelopers/binaries)
-
-### On MacOS
-
-Install freetype by brew.
-
-```bash
-brew install freetype
-```
-
-## Download binary
-
-If you don't want to install `rust` and `cargo`, you can find
-binary releases of `urdf-viz` for Ubuntu16.04/14.04 64bit, Windows, MacOS [here](https://github.com/OTL/urdf-viz/releases).
+![](img/themes.png)
 
 ## How to use
 
@@ -80,6 +34,7 @@ If there are no "package://" in mesh tag, and don't use xacro you can skip insta
 
 In the GUI, you can do some operations with keyboard and mouse.
 
+* `t` key to switch between dark and light themes :new: 
 * `l` key to reload the urdf from file
 * `c` key to toggle collision model or visual mode
 * Move a joint
@@ -162,29 +117,6 @@ $ curl http://127.0.0.1:7777/get_joint_positions | jq
   ]
 }
 ```
-
-## Gallery
-
-![sawyer_1.png](img/sawyer_1.png)
-![sawyer_2.png](img/sawyer_2.png)
-
-![nextage_1.png](img/nextage_1.png)
-![nextage_2.png](img/nextage_2.png)
-
-![hsr_1.png](img/hsr_1.png)
-![hsr_2.png](img/hsr_2.png)
-
-![ubr1_1.png](img/ubr1_1.png)
-![ubr1_2.png](img/ubr1_2.png)
-
-![pepper_1.png](img/pepper_1.png)
-![pepper_2.png](img/pepper_2.png)
-
-![pr2_1.png](img/pr2_1.png)
-![pr2_2.png](img/pr2_2.png)
-
-![thormang3_1.png](img/thormang3_1.png)
-![thormang3_2.png](img/thormang3_2.png)
 
 ## Dependencies
 
