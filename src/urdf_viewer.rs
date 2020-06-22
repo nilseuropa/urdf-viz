@@ -14,17 +14,9 @@
   limitations under the License.
 */
 
-extern crate env_logger;
-extern crate k;
-extern crate kiss3d;
-extern crate nalgebra as na;
-extern crate rand;
-extern crate structopt;
-extern crate urdf_rs;
-extern crate urdf_viz;
-
 use k::prelude::*;
 use kiss3d::event::{Action, Key, Modifiers, WindowEvent};
+use nalgebra as na;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -34,7 +26,7 @@ static NATIVE_MOD: Modifiers = kiss3d::event::Modifiers::Super;
 #[cfg(not(target_os = "macos"))]
 static NATIVE_MOD: Modifiers = kiss3d::event::Modifiers::Control;
 
-fn move_joint_by_random(robot: &mut k::Chain<f32>) -> Result<(), k::JointError> {
+fn move_joint_by_random(robot: &mut k::Chain<f32>) -> Result<(), k::Error> {
     let angles_vec = robot
         .iter_joints()
         .map(|j| match j.limits {
@@ -45,11 +37,16 @@ fn move_joint_by_random(robot: &mut k::Chain<f32>) -> Result<(), k::JointError> 
     robot.set_joint_positions(&angles_vec)
 }
 
+fn move_joint_to_zero(robot: &mut k::Chain<f32>) -> Result<(), k::Error> {
+    let angles_vec = vec![0.0; robot.dof()];
+    robot.set_joint_positions(&angles_vec)
+}
+
 fn move_joint_by_index(
     index: usize,
     diff_angle: f32,
     robot: &mut k::Chain<f32>,
-) -> Result<(), k::JointError> {
+) -> Result<(), k::Error> {
     let mut angles_vec = robot.joint_positions();
     assert!(index < robot.dof());
     angles_vec[index] += diff_angle;
@@ -85,7 +82,7 @@ impl LoopIndex {
     }
 }
 
-//const HOW_TO_USE_STR: &str = "[:    joint ID +1\n]:    joint ID -1\n,:    IK target ID +1\n.:    IK target ID -1\nr:    set random angles\nUp:   joint angle +0.1\nDown: joint angle -0.1\nCtrl+Drag: move joint\nShift+Drag: IK (y, z)\nShift+Ctrl+Drag: IK (x, z)\nc:    toggle visual/collision";
+const HOW_TO_USE_STR: &str = "";//[:    joint ID +1\n]:    joint ID -1\n,:    IK target ID +1\n.:    IK target ID -1\nr:    set random angles\nz:    reset angles\nUp:   joint angle +0.1\nDown: joint angle -0.1\nCtrl+Drag: move joint\nShift+Drag: IK (y, z)\nShift+Ctrl+Drag: IK (x, z)\nc:    toggle visual/collision";
 
 struct UrdfViewerApp {
     input_path: PathBuf,
@@ -100,6 +97,7 @@ struct UrdfViewerApp {
     index_of_move_joint: LoopIndex,
     web_server_port: u16,
     is_collision: bool,
+    ik_constraints: k::Constraints,
     is_light_theme: bool,
 }
 
@@ -160,8 +158,12 @@ impl UrdfViewerApp {
             index_of_move_joint: LoopIndex::new(num_joints),
             web_server_port,
             is_collision,
+            ik_constraints: k::Constraints::default(),
             is_light_theme
         }
+    }
+    pub fn set_ik_constraints(&mut self, ik_constraints: k::Constraints) {
+        self.ik_constraints = ik_constraints;
     }
     fn has_arms(&self) -> bool {
         !self.arms.is_empty()
@@ -223,7 +225,7 @@ impl UrdfViewerApp {
     fn set_joint_positions_from_request(
         &mut self,
         joint_positions: &urdf_viz::JointNamesAndPositions,
-    ) -> Result<(), k::JointError> {
+    ) -> Result<(), k::Error> {
         let mut angles = self.robot.joint_positions();
         for (name, angle) in joint_positions
             .names
@@ -268,7 +270,6 @@ impl UrdfViewerApp {
                 self.update_ik_target_marker();
             }
             Key::C => {
-                // (C)ollision
                 self.viewer.remove_robot(&self.urdf_robot);
                 self.is_collision = !self.is_collision;
                 self.viewer.add_robot_with_base_dir_and_collision_flag(
@@ -279,7 +280,7 @@ impl UrdfViewerApp {
                 self.update_robot();
             }
             Key::L => {
-                // (L)oad URDF
+                // reload
                 self.reload_urdf();
                 self.viewer.add_robot_with_base_dir_and_collision_flag(
                     &self.urdf_robot,
@@ -289,14 +290,18 @@ impl UrdfViewerApp {
                 self.update_robot();
             }
             Key::R => {
-                // (R)andomize joints
                 if self.has_joints() {
                     move_joint_by_random(&mut self.robot).unwrap_or(());
                     self.update_robot();
                 }
             }
+            Key::Z => {
+                if self.has_joints() {
+                    move_joint_to_zero(&mut self.robot).unwrap_or(());
+                    self.update_robot();
+                }
+            }
             Key::T => {
-                // (T)heme
                 self.is_light_theme = !self.is_light_theme;
                 if self.is_light_theme {self.viewer.window.set_background_color(0.95, 0.95, 0.95);}
                 else {self.viewer.window.set_background_color(0.13, 0.14, 0.15);}
@@ -334,7 +339,7 @@ impl UrdfViewerApp {
         const FONT_SIZE_INFO: f32 = 60.0;
         while self.viewer.render() {
             self.viewer.draw_text(
-                "",
+                HOW_TO_USE_STR,
                 FONT_SIZE_USAGE,
                 &na::Point2::new(2000.0, 10.0),
                 &na::Point3::new(1f32, 1.0, 1.0),
@@ -443,13 +448,17 @@ impl UrdfViewerApp {
                                 }
 
                                 self.update_ik_target_marker();
-                                {
-                                    solver
-                                        .solve(&self.get_arm(), &target)
-                                        .unwrap_or_else(|err| {
-                                            println!("Err: {}", err);
-                                        });
-                                }
+                                let orig_angles = self.robot.joint_positions();
+                                solver
+                                    .solve_with_constraints(
+                                        &self.get_arm(),
+                                        &target,
+                                        &self.ik_constraints,
+                                    )
+                                    .unwrap_or_else(|err| {
+                                        self.robot.set_joint_positions_unchecked(&orig_angles);
+                                        println!("Err: {}", err);
+                                    });
                                 self.update_robot();
                             }
                         }
@@ -508,6 +517,18 @@ pub struct Opt {
         default_value = "7777"
     )]
     pub web_server_port: u16,
+    #[structopt(long = "ignore-ik-position-x")]
+    pub ignore_ik_position_x: bool,
+    #[structopt(long = "ignore-ik-position-y")]
+    pub ignore_ik_position_y: bool,
+    #[structopt(long = "ignore-ik-position-z")]
+    pub ignore_ik_position_z: bool,
+    #[structopt(long = "ignore-ik-rotation-x")]
+    pub ignore_ik_rotation_x: bool,
+    #[structopt(long = "ignore-ik-rotation-y")]
+    pub ignore_ik_rotation_y: bool,
+    #[structopt(long = "ignore-ik-rotation-z")]
+    pub ignore_ik_rotation_z: bool,
 }
 
 fn main() {
@@ -521,6 +542,14 @@ fn main() {
         opt.disable_texture,
         opt.web_server_port,
     );
+    let mut ik_constraints = k::Constraints::default();
+    ik_constraints.position_x = !opt.ignore_ik_position_x;
+    ik_constraints.position_y = !opt.ignore_ik_position_y;
+    ik_constraints.position_z = !opt.ignore_ik_position_z;
+    ik_constraints.rotation_x = !opt.ignore_ik_rotation_x;
+    ik_constraints.rotation_y = !opt.ignore_ik_rotation_y;
+    ik_constraints.rotation_z = !opt.ignore_ik_rotation_z;
+    app.set_ik_constraints(ik_constraints);
     app.init();
     app.run();
 }
